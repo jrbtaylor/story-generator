@@ -16,7 +16,12 @@ def orthogonal(shape, name=None):
     u,*_ = np.linalg.svd(w)
     u = u[:shape[0],:shape[1]]
     u = np.reshape(u,shape0)
-    return tf.Variable(u.astype('float32'),name=name)
+    return tf.Variable(u.astype('float32'), name=name)
+
+
+def uniform(shape, name=None):
+    limit = shape[-1]/6
+    return tf.Variable(tf.random_uniform(shape,-limit,limit), name=name)
 
 
 def bias(shape, init_value=0., name=None):
@@ -26,7 +31,8 @@ def bias(shape, init_value=0., name=None):
 
 
 class GRU(object):
-    def __init__(self, input, n_hidden, training=None, zoneout=0.5, name='gru'):
+    def __init__(self, input, n_hidden, training=None, zoneout=0.5, h0=None,
+                 name='gru'):
         """
         A layer of gated recurrent units
 
@@ -34,6 +40,8 @@ class GRU(object):
         :param n_hidden: number of hidden units
         :param training: placeholder to toggle training/validation
         :param zoneout: zoneout rate (training toggles functionality)
+        :param h0: placeholder for initial hidden state
+                   note: can be fed in from decoupled neural interface
         :param name: layer name to prepend to variable names in the graph
         """
         assert len(input.shape.as_list())==3
@@ -49,12 +57,15 @@ class GRU(object):
             self.training = training
         is_training = tf.equal(self.training, 1)
 
-        # Initial state (learned)
-        h0_default = tf.Variable(tf.random_normal([1, n_hidden]))
-        # make h0 a placeholder in case we need to truncate BPTT externally
-        # e.g. for synthetic gradients/decoupled neural interfaces
-        self.h0 = tf.placeholder_with_default(h0_default, [None,n_hidden],
-                                              name=name+'_h0')
+        # Initial state
+        self.h0_default = tf.Variable(tf.random_normal([1, n_hidden]))
+        if h0 is None:
+            self.h0 = tf.placeholder_with_default(self.h0_default,
+                                                  [None, n_hidden],
+                                                  name=name+'_h0')
+        else:
+            self.h0 = tf.placeholder_with_default(h0, [None, n_hidden],
+                                                  name=name+'_h0')
 
         # Zoneout
         bern = tf.distributions.Bernoulli(zoneout, dtype=tf.float32)
@@ -91,16 +102,16 @@ class GRU(object):
             train = timestep
             val = timestep
 
-        self.output = tf.cond(is_training,
-                              lambda: tf.scan(train, input, initializer=self.h0,
-                                              parallel_iterations=seq_len),
-                              lambda: tf.scan(val, input, initializer=self.h0,
-                                              parallel_iterations=seq_len),
-                              name=name+'_output')
+        self.output = tf.cond(
+            is_training,
+            lambda: tf.scan(train, input, initializer=self.h0),
+            lambda: tf.scan(val, input, initializer=self.h0),
+            name=name+'_output')
 
 
 class Dense(object):
-    def __init__(self, input, n_out, activation=None, name='dense'):
+    def __init__(self, input, n_out, activation=None, name='dense',
+                 init='orthogonal', n_in='auto'):
         """
         A single fully-connected layer
 
@@ -111,10 +122,17 @@ class Dense(object):
         """
         assert isinstance(n_out, int)
 
-        n_in = input.shape.as_list()[1]
-        w = orthogonal([n_in,n_out], name+'_w')
+        if n_in=='auto':
+            n_in = input.shape.as_list()[-1]
+
+        if init=='orthogonal':
+            w = orthogonal([n_in,n_out], name+'_w')
+        else:
+            w = uniform([n_in,n_out], name+'_w')
         b = bias(n_out, 0., name+'_b')
 
         if activation is None:
             activation = tf.identity
-        self.output = activation(tf.matmul(input, w)+b, name=name+'_output')
+
+        self.output = activation(tf.tensordot(input, w, axes=[[-1],[0]])+b,
+                                 name=name+'_output')
