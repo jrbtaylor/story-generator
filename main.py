@@ -31,13 +31,13 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
     if not resume:
         pipeline = Vector_Pipeline(train_tfrecord, val_tfrecord, batch_size)
         init_train, init_val = pipeline.init_train, pipeline.init_val
-        model_input = tf.placeholder_with_default(pipeline.output[:-1],
+        model_input = tf.placeholder_with_default(pipeline.output[:,:-1],
                                                   [None, None], 'input')
 
         # Embedding
         embedding = orthogonal([dict_size, n_hidden], 'embedding')
         embedded_input = tf.nn.embedding_lookup(embedding, model_input)
-        int_label = pipeline.output[1:]
+        int_label = pipeline.output[:,1:]
 
         # TODO: add decoupled neural interfaces to speed this up ----------------------------------
         # 1. reshape input to be slow_time x batch x fast_time
@@ -57,7 +57,7 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
         # batch x features x slow_time x fast_time
         dni_input = tf.reshape(
             dni_input,
-            [-1, n_hidden, tf.floor_div(seq_len,decouple_split),decouple_split])
+            [-1, n_hidden, (seq_len+pad_len)//decouple_split, decouple_split])
         # fast_time x features x batch x slow_time
         dni_input = tf.transpose(dni_input, [3,1,0,2])
         # fast_time x features x (batch x slow_time)
@@ -81,6 +81,12 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
         # transpose: tf.scan needs time x batch x features
         embedded_input = tf.transpose(embedded_input, [1,0,2])
         training_toggle = tf.placeholder(tf.int32, name='training_toggle')
+        # with tf.Session() as sess:
+        #     sess.run(tf.global_variables_initializer())
+        #     sess.run(init_train)
+        #     a = sess.run([dni_input, gru_hidden, embedded_input])
+        #     print([x.shape for x in a])
+        #     return
         gru = GRU(embedded_input, n_hidden, training_toggle, h0=gru_hidden,
                   name='gru')
         # model part3: dropout and dense layer
