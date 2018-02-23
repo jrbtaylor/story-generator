@@ -5,6 +5,7 @@ Written by Jason Taylor <jasonrbtaylor@gmail.com> 2018-2019
 import json
 import os
 
+import numpy as np
 import tensorflow as tf
 
 from model import GRU, Dense, orthogonal
@@ -13,7 +14,7 @@ from train import fit
 
 
 def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
-                n_hidden, learn_rate, batch_size, decouple_split=100,
+                n_hidden, learn_rate, batch_size, decouple_split=200,
                 patience=10, max_epochs=200, sample_length=16, resume=False):
 
     exp_dir = os.path.join(os.path.expanduser('~/experiments/story-gen/'),
@@ -47,7 +48,6 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
         # Split to subsequences, reshape to slow_time x batch x fast_time x feat
         seq_len = tf.shape(embedded_input)[1]
         # pad so sequence length is divisible by subsequence length
-        decouple_split = 200
         pad_len = decouple_split-tf.mod(seq_len,tf.constant(decouple_split))
         embedded_input = tf.pad(embedded_input, [[0,0], [0,pad_len], [0,0]],
                                 mode='CONSTANT', constant_values=0)
@@ -81,17 +81,13 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
         # transpose: tf.scan needs time x batch x features
         embedded_input = tf.transpose(embedded_input, [1,0,2])
         training_toggle = tf.placeholder(tf.int32, name='training_toggle')
-        # with tf.Session() as sess:
-        #     sess.run(tf.global_variables_initializer())
-        #     sess.run(init_train)
-        #     a = sess.run([dni_input, gru_hidden, embedded_input])
-        #     print([x.shape for x in a])
-        #     return
         gru = GRU(embedded_input, n_hidden, training_toggle, h0=gru_hidden,
                   name='gru')
+        gru_h0 = gru.h0
+        gru_output = gru.output
         # model part3: dropout and dense layer
         dropout_rate = tf.placeholder(tf.float32, name='dropout_rate')
-        dropped = tf.nn.dropout(gru.output, 1-dropout_rate)
+        dropped = tf.nn.dropout(gru_output, 1-dropout_rate)
         dense = Dense(dropped, dict_size)
         model_output = tf.identity(dense.output, 'output')
 
@@ -114,13 +110,34 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
         train_step = tf.train.AdamOptimizer(learn_rate).minimize(
             loss+dni_loss,name='train_step')
     else:
-        (model_input, training_toggle, dropout_rate, train_step,
-         init_train, init_val, loss, dni_loss) = reload_graph(exp_dir)
+        (model_input, training_toggle, dropout_rate, train_step, init_train,
+         init_val, loss, dni_loss, gru_output, gru_h0, model_output
+            ) = reload_graph(exp_dir)
+    n_examples = tf.shape(model_input)[0]
 
-    # TODO: add callback (w/ input arg sess) to sample sentence after each epoch, define here and add to train.py --------------------------------------------------------
+    sampled_out = tf.multinomial(model_output[0,:1,:],num_samples=1)
+    def epoch_callback(sess):
+        # note: not sure how to initialize this since it's usually from the DNI
+        print(n_hidden)
+        h0 = np.random.rand(1, n_hidden)
+        print(h0.shape)
+        # note: discard first word after?
+        sampled_text = [np.random.randint(0,dict_size,size=(1,1))]
+        for i in range(sample_length+1):
+            out,h0 = sess.run([sampled_out, gru_output],
+                              feed_dict={gru_h0:h0,
+                                         model_input:sampled_text[i],
+                                         dropout_rate:0,
+                                         training_toggle:0})
+            h0 = h0[0]
+            sampled_text.append(out)
+        sampled_text = sampled_text[1:]
+        print(' '.join([reverse_dict[int(o)] for o in sampled_text]))
+        print('')
 
     fit(training_toggle, dropout_rate, train_step, init_train, init_val, loss,
-        dni_loss, patience, max_epochs, exp_dir, resume)
+        dni_loss, n_examples, patience, max_epochs, exp_dir, epoch_callback,
+        resume)
 
 
 def reload_graph(exp_dir):
@@ -149,9 +166,12 @@ def reload_graph(exp_dir):
     init_val = get_op('init_val')
     loss = get_tensor('loss')
     dni_loss = get_tensor('dni_loss')
+    gru_output = get_tensor('gru_output')
+    gru_h0 = get_tensor('gru_h0')
+    output = get_tensor('output')
 
     return (model_input, training_toggle, dropout_rate, train_step,
-            init_train, init_val, loss, dni_loss)
+            init_train, init_val, loss, dni_loss, gru_output, gru_h0, output)
 
 
 def generate(sess, model_input, hidden_states, model_output, reverse_dictionary,
