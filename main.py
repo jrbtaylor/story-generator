@@ -118,9 +118,7 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
     sampled_out = tf.multinomial(model_output[0,:1,:],num_samples=1)
     def epoch_callback(sess):
         # note: not sure how to initialize this since it's usually from the DNI
-        print(n_hidden)
         h0 = np.random.rand(1, n_hidden)
-        print(h0.shape)
         # note: discard first word after?
         sampled_text = [np.random.randint(0,dict_size,size=(1,1))]
         for i in range(sample_length+1):
@@ -132,6 +130,12 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
             h0 = h0[0]
             sampled_text.append(out)
         sampled_text = sampled_text[1:]
+        # bugfix: I screwed up the reverse dictionary and there's missing keys
+        if any([int(o) not in reverse_dict.keys() for o in sampled_text]):
+            sampled_text = [
+                o if int(o) in reverse_dict.keys()
+                else int(np.random.choice(list(reverse_dict.keys())))
+                for o in sampled_text]
         print(' '.join([reverse_dict[int(o)] for o in sampled_text]))
         print('')
 

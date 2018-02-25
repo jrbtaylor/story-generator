@@ -82,11 +82,11 @@ def fit(training_toggle, dropout_rate, train_step, init_train, init_val, loss,
 
         for epoch_number in range(start_epoch,max_epochs):
             epoch_loss, epoch_dni_loss = epoch(sess, epoch_number, True)
-            stats['loss']['train'].append(epoch_loss)
-            stats['dni_loss']['train'].append(epoch_dni_loss)
+            stats['loss']['train'].append(float(epoch_loss))
+            stats['dni_loss']['train'].append(float(epoch_dni_loss))
             epoch_loss, epoch_dni_loss = epoch(sess, epoch_number, False)
-            stats['loss']['val'].append(epoch_loss)
-            stats['dni_loss']['val'].append(epoch_dni_loss)
+            stats['loss']['val'].append(float(epoch_loss))
+            stats['dni_loss']['val'].append(float(epoch_dni_loss))
             epoch_callback(sess)
 
             # save checkpoint & stats, update plots
