@@ -32,6 +32,7 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
     if not resume:
         pipeline = Vector_Pipeline(train_tfrecord, val_tfrecord, batch_size)
         init_train, init_val = pipeline.init_train, pipeline.init_val
+
         model_input = tf.placeholder_with_default(pipeline.output[:,:-1],
                                                   [None, None], 'input')
 
@@ -39,11 +40,6 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
         embedding = orthogonal([dict_size, n_hidden], 'embedding')
         embedded_input = tf.nn.embedding_lookup(embedding, model_input)
         int_label = pipeline.output[:,1:]
-
-        # TODO: add decoupled neural interfaces to speed this up ----------------------------------
-        # 1. reshape input to be slow_time x batch x fast_time
-        # 2. define decoupled neural interface as a gru
-        # 3. add dni loss printout to training
 
         # Split to subsequences, reshape to slow_time x batch x fast_time x feat
         seq_len = tf.shape(embedded_input)[1]
