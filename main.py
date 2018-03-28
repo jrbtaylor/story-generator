@@ -16,6 +16,24 @@ from train import fit
 def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
                 n_hidden, learn_rate, batch_size, decouple_split=200,
                 patience=10, max_epochs=200, sample_length=16, resume=False):
+    """
+    Train a GRU on some text data
+
+    :param exp_name: experiment name (saved to ~/experiments/story-gen/exp_name)
+    :param train_tfrecord: path to tfrecord of training set
+    :param val_tfrecord: path to tfrecord of validation set
+    :param dictionary_file: path to dictionary json file
+    :param n_hidden: number of hidden units in GRU
+    :param learn_rate: learning rate
+    :param batch_size: batch size
+    :param decouple_split: subsequence length between decoupled neural interface
+                           or None to not use decoupled neural intefaces
+    :param patience: early stopping limit
+    :param max_epochs: maximum number of epochs to run
+    :param sample_length: length of sample to generate after each epoch
+    :param resume: resume from previous run
+    :return:
+    """
 
     exp_dir = os.path.join(os.path.expanduser('~/experiments/story-gen/'),
                            exp_name)
@@ -124,9 +142,9 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
 
     sampled_out = tf.multinomial(model_output[0,:1,:],num_samples=1)
     def epoch_callback(sess):
-        # note: not sure how to initialize this since it's usually from the DNI
+        # TODO: not sure how to initialize this since it's usually from the DNI
+        # maybe discard first word after?
         h0 = np.random.rand(1, n_hidden)
-        # note: discard first word after?
         sampled_text = [np.random.randint(0,dict_size,size=(1,1))]
         for i in range(sample_length+1):
             out,h0 = sess.run([sampled_out, gru_output],
@@ -137,7 +155,7 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
             h0 = h0[0]
             sampled_text.append(out)
         sampled_text = sampled_text[1:]
-        # bugfix: I screwed up the reverse dictionary and there's missing keys
+        # temp bugfix: screwed up the reverse dictionary, missing keys
         if any([int(o) not in reverse_dict.keys() for o in sampled_text]):
             sampled_text = [
                 o if int(o) in reverse_dict.keys()
@@ -152,6 +170,13 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
 
 
 def reload_graph(exp_dir):
+    """
+    Reload the computation graph and return handles to the required tensors
+    for resuming training
+
+    :param exp_dir: experiment directory
+    :return: tuple of tensors
+    """
     model_file = [f for f in os.listdir(exp_dir) if f.endswith('.meta')]
     if len(model_file)!=1:
         raise ValueError
