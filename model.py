@@ -58,8 +58,8 @@ class GRU(object):
         is_training = tf.equal(self.training, 1)
 
         # Initial state
-        self.h0_default = tf.Variable(tf.random_normal([1, n_hidden]))
         if h0 is None:
+            self.h0_default = tf.Variable(tf.random_normal([1, n_hidden]))
             self.h0 = tf.placeholder_with_default(self.h0_default,
                                                   [None, n_hidden],
                                                   name=name+'_h0')
