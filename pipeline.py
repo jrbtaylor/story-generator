@@ -14,7 +14,7 @@ class Vector_Pipeline(object):
         Load vectors of integers from tfrecord files.
 
         note: pads batches w/ 0 so all sequences match the longest example
-              adds 1 to all values so that zero is a unique None value
+              adds 1 to all other values so that 0 is unique to padding
 
         :param train_tfrecord: path to tfrecord file
         :param val_tfrecord: path to tfrecord file
