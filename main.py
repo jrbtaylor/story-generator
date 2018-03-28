@@ -41,37 +41,45 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
         embedded_input = tf.nn.embedding_lookup(embedding, model_input)
         int_label = pipeline.output[:,1:]
 
-        # Split to subsequences, reshape to slow_time x batch x fast_time x feat
-        seq_len = tf.shape(embedded_input)[1]
-        # pad so sequence length is divisible by subsequence length
-        pad_len = decouple_split-tf.mod(seq_len,tf.constant(decouple_split))
-        embedded_input = tf.pad(embedded_input, [[0,0], [0,pad_len], [0,0]],
-                                mode='CONSTANT', constant_values=0)
-        int_label = tf.pad(int_label, [[0,0], [0,pad_len]])
-        # batch x features x time
-        dni_input = tf.transpose(embedded_input, [0,2,1])
-        # batch x features x slow_time x fast_time
-        dni_input = tf.reshape(
-            dni_input,
-            [-1, n_hidden, (seq_len+pad_len)//decouple_split, decouple_split])
-        # fast_time x features x batch x slow_time
-        dni_input = tf.transpose(dni_input, [3,1,0,2])
-        # fast_time x features x (batch x slow_time)
-        dni_input = tf.reshape(dni_input, [decouple_split, n_hidden, -1])
-        # (batch x slow_time) x fast_time x features
-        dni_input = tf.transpose(dni_input, [2,0,1])
-        # (batch x slow_time) x (fast_time x features)
-        dni_input = tf.reshape(dni_input, [tf.shape(dni_input)[0],-1])
+        # Decoupled neural interface (optional)
+        decoupled = decouple_split is not None
+        if decoupled:
+            # Split subsequences, reshape to [slow_time, batch, fast_time, feat]
+            seq_len = tf.shape(embedded_input)[1]
+            # pad so sequence length is divisible by subsequence length
+            pad_len = decouple_split-tf.mod(seq_len,tf.constant(decouple_split))
+            embedded_input = tf.pad(embedded_input, [[0,0], [0,pad_len], [0,0]],
+                                    mode='CONSTANT', constant_values=0)
+            int_label = tf.pad(int_label, [[0,0], [0,pad_len]])
+            # batch x features x time
+            dni_input = tf.transpose(embedded_input, [0,2,1])
+            # batch x features x slow_time x fast_time
+            dni_input = tf.reshape(
+                dni_input,
+                [-1, n_hidden,
+                 (seq_len+pad_len)//decouple_split, decouple_split])
+            # fast_time x features x batch x slow_time
+            dni_input = tf.transpose(dni_input, [3,1,0,2])
+            # fast_time x features x (batch x slow_time)
+            dni_input = tf.reshape(dni_input, [decouple_split, n_hidden, -1])
+            # (batch x slow_time) x fast_time x features
+            dni_input = tf.transpose(dni_input, [2,0,1])
+            # (batch x slow_time) x (fast_time x features)
+            dni_input = tf.reshape(dni_input, [tf.shape(dni_input)[0],-1])
 
-        # Decoupled neural interface: simplify to single dense layer
-        dni = Dense(dni_input, n_hidden, tf.nn.relu, name='dni', init='uniform',
-                    n_in=n_hidden*decouple_split)
+            # Decoupled neural interface: simplify to single dense layer
+            dni = Dense(dni_input, n_hidden, tf.nn.relu, name='dni',
+                        init='uniform', n_in=n_hidden*decouple_split)
 
-        # Reshape DNI out & embedded_input to new_batch x fast_time for main GRU
-        gru_hidden = tf.reshape(dni.output, [-1, n_hidden])
-        embedded_input = tf.reshape(embedded_input,
-                                    [-1, decouple_split, n_hidden])
-        int_label = tf.reshape(int_label, [-1, decouple_split])
+            # Reshape DNI out & embedded_input to new_batch x fast_time for GRU
+            gru_hidden = tf.reshape(dni.output, [-1, n_hidden])
+            embedded_input = tf.reshape(embedded_input,
+                                        [-1, decouple_split, n_hidden])
+            int_label = tf.reshape(int_label, [-1, decouple_split])
+        else:
+            gru_hidden = None  # use the definition in model.GRU.__init__
+            # limit sequence length heuristically
+            embedded_input = embedded_input[:,:tf.minimum(5000,tf.shape(embedded_input)[1]),:]
 
         # model part2: GRU
         # transpose: tf.scan needs time x batch x features
@@ -87,11 +95,6 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
         dense = Dense(dropped, dict_size)
         model_output = tf.identity(dense.output, 'output')
 
-        # decoupled neural interface loss
-        dni_label = tf.stop_gradient(gru.output)
-        dni_loss = tf.reduce_mean(tf.square(dni_label-dni.output),
-                                  name='dni_loss')
-
         # cross-entropy loss
         # note: sequences padded with -1, mask these entries
         mask = tf.not_equal(int_label, -1)
@@ -102,6 +105,14 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
         loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
             labels=int_label, logits=model_output)
         loss = tf.reduce_sum(mask*loss)/tf.reduce_sum(mask)
+
+        if decoupled:
+            # decoupled neural interface loss
+            dni_label = tf.stop_gradient(gru.output)
+            dni_loss = tf.reduce_mean(tf.square(dni_label-dni.output),
+                                      name='dni_loss')
+        else:
+            dni_loss =  tf.constant(0., dtype=tf.float32)
 
         train_step = tf.train.AdamOptimizer(learn_rate).minimize(
             loss+dni_loss,name='train_step')
