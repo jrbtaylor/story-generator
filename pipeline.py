@@ -9,7 +9,7 @@ from tensorflow.python.data import TFRecordDataset
 
 class Vector_Pipeline(object):
     def __init__(self, train_tfrecord, val_tfrecord, batch_size,
-                 buffer_size=50):
+                 max_sequence=None, buffer_size=50):
         """
         Load vectors of integers from tfrecord files.
 
@@ -19,6 +19,7 @@ class Vector_Pipeline(object):
         :param train_tfrecord: path to tfrecord file
         :param val_tfrecord: path to tfrecord file
         :param batch_size: batch size
+        :param max_sequence: maximum sequence length (None means unlimited)
         :param buffer_size: examples in buffer for shuffling
         """
         assert isinstance(train_tfrecord, str)
@@ -30,20 +31,24 @@ class Vector_Pipeline(object):
         if buffer_size<batch_size:
             buffer_size = batch_size
 
-        def dataset(tfrecord):
+        def dataset(tfrecord, shuffle):
             ds = TFRecordDataset(tfrecord)
             def parse(x):
                 example = tf.parse_single_example(
                     x, features={'data': tf.VarLenFeature(tf.int64)})
                 example = tf.cast(example['data'].values, tf.int32)+1
+                if max_sequence is not None:
+                    example = example[:max_sequence]
                 return example
             ds = ds.map(parse, num_parallel_calls=8)
+            if shuffle:
+                ds = ds.shuffle(buffer_size)
             return ds.padded_batch(batch_size,
                                    padded_shapes=(tf.TensorShape([None])),
                                    padding_values=0)
 
-        train_dataset = dataset(train_tfrecord).shuffle(buffer_size)
-        val_dataset = dataset(val_tfrecord)
+        train_dataset = dataset(train_tfrecord, shuffle=True)
+        val_dataset = dataset(val_tfrecord, shuffle=False)
         iterator = Iterator.from_structure(
             train_dataset.output_types,train_dataset.output_shapes)
         self.init_train = iterator.make_initializer(train_dataset,

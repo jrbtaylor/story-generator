@@ -48,7 +48,9 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
     dict_size = max(reverse_dict.keys())+1
 
     if not resume:
-        pipeline = Vector_Pipeline(train_tfrecord, val_tfrecord, batch_size)
+        max_sequence = 20000 if decouple_split is not None else 100
+        pipeline = Vector_Pipeline(train_tfrecord, val_tfrecord, batch_size,
+                                   max_sequence=max_sequence)
         init_train, init_val = pipeline.init_train, pipeline.init_val
 
         model_input = tf.placeholder_with_default(pipeline.output[:,:-1],
@@ -95,9 +97,7 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
                                         [-1, decouple_split, n_hidden])
             int_label = tf.reshape(int_label, [-1, decouple_split])
         else:
-            gru_hidden = None  # use the definition in model.GRU.__init__
-            # limit sequence length heuristically
-            embedded_input = embedded_input[:,:tf.minimum(5000,tf.shape(embedded_input)[1]),:]
+            gru_hidden = None
 
         # model part2: GRU
         # transpose: tf.scan needs time x batch x features
@@ -143,7 +143,6 @@ def train_model(exp_name, train_tfrecord, val_tfrecord, dictionary_file,
     sampled_out = tf.multinomial(model_output[0,:1,:],num_samples=1)
     def epoch_callback(sess):
         # TODO: not sure how to initialize this since it's usually from the DNI
-        # maybe discard first word after?
         h0 = np.random.rand(1, n_hidden)
         sampled_text = [np.random.randint(0,dict_size,size=(1,1))]
         for i in range(sample_length+1):
